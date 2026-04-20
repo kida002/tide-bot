@@ -10,32 +10,16 @@ TIDE_API_KEY = os.environ.get("TIDE_API_KEY")
 
 # 📍 Locations
 locations = {
-    "kundalika": {
-        "name": "Kundalika",
-        "lat": 18.45,
-        "lng": 73.20
-    },
-    "bankot": {
-        "name": "Bankot Creek Bridge",
-        "lat": 17.98,
-        "lng": 73.03
-    },
-    "jaigarh": {
-        "name": "JSW Jaigarh Port",
-        "lat": 16.59,
-        "lng": 73.35
-    },
-    "daman": {
-        "name": "Daman (Jampur Beach)",
-        "lat": 20.41,
-        "lng": 72.83
-    }
+    "kundalika": {"name": "Kundalika", "lat": 18.45, "lng": 73.20},
+    "bankot": {"name": "Bankot Creek Bridge", "lat": 17.98, "lng": 73.03},
+    "jaigarh": {"name": "JSW Jaigarh Port", "lat": 16.59, "lng": 73.35},
+    "daman": {"name": "Daman (Jampur Beach)", "lat": 20.41, "lng": 72.83}
 }
 
 # 🇮🇳 IST timezone
 IST = timezone(timedelta(hours=5, minutes=30))
 
-# 🧠 Simple cache
+# 🧠 Cache
 cache = {}
 
 def get_tide(lat, lng, location_name):
@@ -46,7 +30,7 @@ def get_tide(lat, lng, location_name):
         if cache_key in cache:
             return cache[cache_key]
 
-        print("🔥 USING WORLDTIDES API 🔥")  # DEBUG LINE
+        print("🔥 USING WORLDTIDES API 🔥")
 
         url = f"https://www.worldtides.info/api/v3?extremes&lat={lat}&lon={lng}&key={TIDE_API_KEY}"
 
@@ -58,33 +42,27 @@ def get_tide(lat, lng, location_name):
             return f"❌ No tide data found for {location_name}."
 
         today = datetime.now(IST).strftime("%A, %d %B %Y")
-        today_date = datetime.now(IST).date()
 
         message = f"🌊 *Tide Times - {location_name}*\n"
         message += f"📅 {today}\n\n"
 
-        found = False
-
-        for tide in extremes:
+        # 🔥 FIX: removed strict date filter
+        for tide in extremes[:6]:  # show next 6 tides
             tide_type = tide.get("type")
             timestamp = tide.get("dt")
             height = tide.get("height")
 
-            # ⏱ UTC → IST
             utc_time = datetime.fromtimestamp(timestamp, tz=timezone.utc)
             ist_time = utc_time.astimezone(IST)
 
-            if ist_time.date() == today_date:
-                found = True
-                time_formatted = ist_time.strftime("%I:%M %p")
-                icon = "🔴" if tide_type == "High" else "🔵"
+            time_formatted = ist_time.strftime("%I:%M %p")
+            date_formatted = ist_time.strftime("%d %b")
 
-                message += f"{icon} *{tide_type} Tide:* {time_formatted} — {height}m\n"
+            icon = "🔴" if tide_type == "High" else "🔵"
 
-        if not found:
-            message += "❌ No tides found for today."
+            message += f"{icon} *{tide_type} Tide:* {time_formatted} ({date_formatted}) — {height}m\n"
 
-        # 💾 Save cache
+        # 💾 Cache result
         cache[cache_key] = message
 
         return message
