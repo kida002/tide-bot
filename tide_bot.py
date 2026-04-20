@@ -34,48 +34,40 @@ def get_tide(lat, lng, location_name):
             return f"⚠️ No tide data for {location_name}"
 
         now = datetime.now(IST)
-        today_date = now.date()
         today_str = now.strftime("%A, %d %B %Y")
 
         message = f"🌊 *Tide Times - {location_name}*\n"
         message += f"📅 {today_str}\n"
         message += f"📍 Station: {station}\n\n"
 
-        today_tides = []
-
+        # 🔥 Convert all tides to IST
+        tides = []
         for tide in extremes:
-            tide_type = tide.get("type")
-            timestamp = tide.get("dt")
-            height = tide.get("height")
-
-            utc_time = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+            utc_time = datetime.fromtimestamp(tide["dt"], tz=timezone.utc)
             ist_time = utc_time.astimezone(IST)
+            tides.append((ist_time, tide["type"], tide["height"]))
 
-            # 🔥 Key fix: include full calendar day
-            if ist_time.date() == today_date:
-                today_tides.append((ist_time, tide_type, height))
+        # 🔥 Sort all tides
+        tides.sort(key=lambda x: x[0])
 
-        # 🔥 SORT (important)
-        today_tides.sort(key=lambda x: x[0])
+        # 🔥 Find closest index to NOW
+        closest_index = min(range(len(tides)), key=lambda i: abs(tides[i][0] - now))
 
-        # 🔥 Ensure 4 tides (if only 2, pull previous ones)
-        if len(today_tides) < 4:
-            for tide in extremes:
-                utc_time = datetime.fromtimestamp(tide["dt"], tz=timezone.utc)
-                ist_time = utc_time.astimezone(IST)
+        # 🔥 Take 2 before + 2 after → always 4 tides
+        start = max(0, closest_index - 2)
+        selected = tides[start:start + 4]
 
-                if ist_time.date() < today_date:
-                    today_tides.insert(0, (ist_time, tide["type"], tide["height"]))
+        # 🔥 If less than 4, extend
+        if len(selected) < 4:
+            selected = tides[:4]
 
-                if len(today_tides) >= 4:
-                    break
-
-        # 🔥 Print only 4
-        for ist_time, tide_type, height in today_tides[:4]:
+        # 🔥 Print result
+        for ist_time, tide_type, height in selected:
             time_formatted = ist_time.strftime("%I:%M %p")
+            date_formatted = ist_time.strftime("%d %b")
             icon = "🔴" if tide_type == "High" else "🔵"
 
-            message += f"{icon} *{tide_type} Tide:* {time_formatted} — {round(height, 3)}m\n"
+            message += f"{icon} *{tide_type} Tide:* {time_formatted} ({date_formatted}) — {round(height,3)}m\n"
 
         return message
 
