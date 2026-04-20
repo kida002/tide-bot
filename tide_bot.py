@@ -21,8 +21,8 @@ locations = {
     },
     "jaigarh": {
         "name": "JSW Jaigarh Port",
-        "url": "https://www.tidetime.org/asia/india/dabhol.htm",
-        "ref": "Dabhol"
+        "url": "https://www.tidetime.org/asia/india/ratnagiri.htm",
+        "ref": "Ratnagiri"
     },
     "daman": {
         "name": "Daman (Jampur Beach)",
@@ -43,30 +43,39 @@ def get_tide(url, location_name, ref):
 
         message = f"🌊 *Tide Times - {location_name}*\n"
         message += f"📅 {today}\n"
-        message += f"📍 Reference Station: {ref}\n\n"
+        message += f"📍 Reference: {ref}\n\n"
 
-        # Find today's tide table - first column
+        # Find the paragraph that has today's tide summary
+        paragraphs = soup.find_all("p")
+        tide_para = None
+        for p in paragraphs:
+            text = p.get_text()
+            if "predicted tides today" in text.lower():
+                tide_para = text
+                break
+
+        if tide_para:
+            message += f"ℹ️ {tide_para.strip()}\n\n"
+
+        # Also get table data for detailed view
         table = soup.find("table")
-        if not table:
-            return "❌ Could not fetch tide data."
+        if table:
+            first_td = table.find("td")
+            if first_td:
+                items = first_td.find_all("li")
+                if items:
+                    for item in items:
+                        text = item.get_text().strip()
+                        if "High" in text:
+                            message += f"🔴 {text}\n"
+                        elif "Low" in text:
+                            message += f"🔵 {text}\n"
+                    return message
 
-        # Get first cell (today's data)
-        first_td = table.find("td")
-        if not first_td:
-            return "❌ No tide data found."
+        if tide_para:
+            return message
 
-        items = first_td.find_all("li")
-        if not items:
-            return "❌ Tide data format changed."
-
-        for item in items:
-            text = item.get_text().strip()
-            if "High" in text:
-                message += f"🔴 {text}\n"
-            elif "Low" in text:
-                message += f"🔵 {text}\n"
-
-        return message
+        return "❌ Could not fetch tide data."
 
     except Exception as e:
         return f"❌ Error: {str(e)}"
