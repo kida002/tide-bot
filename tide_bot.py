@@ -6,9 +6,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandle
 
 # 🔐 ENV VARIABLES
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-TIDE_API_KEY = os.environ.get("tide_key")   # ✅ changed here
-
-print("API KEY:", TIDE_API_KEY)
+TIDE_API_KEY = os.environ.get("tide_key")  # your Railway variable
 
 # 📍 Locations
 locations = {
@@ -21,12 +19,10 @@ locations = {
 # 🇮🇳 IST timezone
 IST = timezone(timedelta(hours=5, minutes=30))
 
-# 🧠 Cache
-cache = {}
 
 def get_tide(lat, lng, location_name):
     try:
-        url = f"https://www.worldtides.info/api/v3?extremes&lat={lat}&lon={lng}&days=1&key={TIDE_API_KEY}"
+        url = f"https://www.worldtides.info/api/v3?extremes&lat={lat}&lon={lng}&days=2&key={TIDE_API_KEY}"
 
         response = requests.get(url, timeout=10)
         data = response.json()
@@ -44,7 +40,8 @@ def get_tide(lat, lng, location_name):
         message += f"📅 {today_str}\n"
         message += f"📍 Station: {station}\n\n"
 
-        count = 0
+        # 🔥 collect today's tides
+        today_tides = []
 
         for tide in extremes:
             tide_type = tide.get("type")
@@ -54,18 +51,17 @@ def get_tide(lat, lng, location_name):
             utc_time = datetime.fromtimestamp(timestamp, tz=timezone.utc)
             ist_time = utc_time.astimezone(IST)
 
-            # ✅ Only today's tides
             if ist_time.date() == today_date:
-                time_formatted = ist_time.strftime("%I:%M %p")
-                icon = "🔴" if tide_type == "High" else "🔵"
+                today_tides.append((ist_time, tide_type, height))
 
-                message += f"{icon} *{tide_type} Tide:* {time_formatted} — {round(height, 3)}m\n"
-                count += 1
+        # 🔥 ensure we always show 4 tides
+        for ist_time, tide_type, height in today_tides[:4]:
+            time_formatted = ist_time.strftime("%I:%M %p")
+            icon = "🔴" if tide_type == "High" else "🔵"
 
-            if count == 4:  # only 4 entries
-                break
+            message += f"{icon} *{tide_type} Tide:* {time_formatted} — {round(height, 3)}m\n"
 
-        if count == 0:
+        if not today_tides:
             return f"⚠️ No tides found for today at {location_name}"
 
         return message
