@@ -21,8 +21,8 @@ locations = {
     },
     "jaigarh": {
         "name": "JSW Jaigarh Port",
-        "url": "https://www.tidetime.org/asia/india/ratnagiri.htm",
-        "ref": "Ratnagiri"
+        "url": "https://www.tidetime.org/asia/india/mumbai.htm",
+        "ref": "Mumbai"
     },
     "daman": {
         "name": "Daman (Jampur Beach)",
