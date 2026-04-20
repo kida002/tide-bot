@@ -43,12 +43,18 @@ def get_tide(lat, lng, location_name):
         search_res = requests.get(search_url, headers=headers, timeout=10).json()
 
         # Get station ID from response
-        stations = search_res.get("stations", [])
+        # Handle both list and dict response
+        if isinstance(search_res, list):
+            stations = search_res
+        else:
+            stations = search_res.get("stations", search_res.get("data", []))
+
         if not stations:
             return f"❌ No tide station found near {location_name}."
 
-        station_id = stations[0]["id"]
-        station_name = stations[0].get("name", "Nearest Station")
+        station = stations[0]
+        station_id = station.get("id") or station.get("stationId")
+        station_name = station.get("name", "Nearest Station")
 
         # Step 2 — Get tide predictions
         tide_url = f"https://tidecheck.com/api/station/{station_id}/tides?days=1&datum=LAT"
