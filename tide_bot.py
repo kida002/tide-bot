@@ -1,12 +1,13 @@
 import os
 import requests
 from datetime import datetime, timezone, timedelta
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 
-# 🔐 ENV VARIABLES
+# 🔐 ENV
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-TIDE_API_KEY = os.environ.get("tide_key")  # your Railway variable
+TIDE_API_KEY = os.environ.get("tide_key")
 
 # 📍 Locations
 locations = {
@@ -16,14 +17,26 @@ locations = {
     "daman": {"name": "Daman (Jampur Beach)", "lat": 20.41, "lng": 72.83}
 }
 
-# 🇮🇳 IST timezone
+# 🇮🇳 IST
 IST = timezone(timedelta(hours=5, minutes=30))
+
+# 🧠 CACHE (daily)
+cache = {}
 
 
 def get_tide(lat, lng, location_name):
     try:
-        url = f"https://www.worldtides.info/api/v3?extremes&lat={lat}&lon={lng}&days=2&key={TIDE_API_KEY}"
+        today_key = datetime.now(IST).strftime("%Y-%m-%d")
+        cache_key = f"{lat},{lng}_{today_key}"
 
+        # ✅ USE CACHE
+        if cache_key in cache:
+            print("⚡ Using cached data")
+            return cache[cache_key]
+
+        print("🌐 Calling WorldTides API")
+
+        url = f"https://www.worldtides.info/api/v3?extremes&lat={lat}&lon={lng}&days=2&key={TIDE_API_KEY}"
         response = requests.get(url, timeout=10)
         data = response.json()
 
@@ -34,47 +47,51 @@ def get_tide(lat, lng, location_name):
             return f"⚠️ No tide data for {location_name}"
 
         now = datetime.now(IST)
+        today = now.date()
         today_str = now.strftime("%A, %d %B %Y")
 
         message = f"🌊 *Tide Times - {location_name}*\n"
-        message += f"📅 {today_str}\n"
-        message += f"📍 Station: {station}\n\n"
+        message += f"📅 {today_str}\n\n"
 
-        # 🔥 Convert all tides to IST
+        # 🔥 Convert all tides
         tides = []
         for tide in extremes:
             utc_time = datetime.fromtimestamp(tide["dt"], tz=timezone.utc)
             ist_time = utc_time.astimezone(IST)
             tides.append((ist_time, tide["type"], tide["height"]))
 
-        # 🔥 Sort all tides
+        # sort
         tides.sort(key=lambda x: x[0])
 
-        # 🔥 Find closest index to NOW
-        closest_index = min(range(len(tides)), key=lambda i: abs(tides[i][0] - now))
+        # 🔥 take nearest 4 tides around today
+        today_tides = [t for t in tides if t[0].date() == today]
 
-        # 🔥 Take 2 before + 2 after → always 4 tides
-        start = max(0, closest_index - 2)
-        selected = tides[start:start + 4]
+        if len(today_tides) < 4:
+            for t in tides:
+                if t not in today_tides:
+                    today_tides.append(t)
+                if len(today_tides) >= 4:
+                    break
 
-        # 🔥 If less than 4, extend
-        if len(selected) < 4:
-            selected = tides[:4]
+        today_tides.sort(key=lambda x: x[0])
+        final_tides = today_tides[:4]
 
-        # 🔥 Print result
-        for ist_time, tide_type, height in selected:
-            time_formatted = ist_time.strftime("%I:%M %p")
-            date_formatted = ist_time.strftime("%d %b")
-            icon = "🔴" if tide_type == "High" else "🔵"
+        # 🔥 clean format
+        for t in final_tides:
+            time_str = t[0].strftime("%I:%M %p")
+            icon = "🔴" if t[1] == "High" else "🔵"
+            message += f"{icon} {t[1]} Tide — {time_str}\n"
 
-            message += f"{icon} *{tide_type} Tide:* {time_formatted} ({date_formatted}) — {round(height,3)}m\n"
+        # 💾 SAVE CACHE
+        cache[cache_key] = message
 
         return message
 
     except Exception as e:
         return f"❌ Error: {str(e)}"
 
-# 🤖 /tide command
+
+# 🤖 /tide
 async def tide(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("📍 Kundalika", callback_data="kundalika")],
@@ -83,35 +100,32 @@ async def tide(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📍 Daman (Jampur Beach)", callback_data="daman")]
     ]
 
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
     await update.message.reply_text(
-        "🌊 *Select Location for Tide Times:*",
-        reply_markup=reply_markup,
+        "🌊 *Select Location:*",
+        reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="Markdown"
     )
 
 
-# 🖱 Button handler
+# 🖱 click
 async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    location_key = query.data
-    location = locations[location_key]
+    loc = locations[query.data]
 
-    await query.edit_message_text("⏳ Fetching tide data...")
+    await query.edit_message_text("⏳ Fetching...")
 
-    message = get_tide(location["lat"], location["lng"], location["name"])
+    result = get_tide(loc["lat"], loc["lng"], loc["name"])
 
-    await query.edit_message_text(message, parse_mode="Markdown")
+    await query.edit_message_text(result, parse_mode="Markdown")
 
 
-# 🚀 MAIN
+# 🚀 RUN
 app = ApplicationBuilder().token(BOT_TOKEN).build()
 
 app.add_handler(CommandHandler("tide", tide))
 app.add_handler(CallbackQueryHandler(button_click))
 
-print("✅ Tide bot started...")
+print("✅ Bot running with caching...")
 app.run_polling()
