@@ -16,13 +16,13 @@ locations = {
     },
     "bankot": {
         "name": "Bankot Creek Bridge",
-        "url": "https://www.tidetime.org/asia/india/revadanda.htm",
-        "ref": "Revadanda"
+        "url": "https://www.tidetime.org/asia/india/srivardhan.htm",
+        "ref": "Srivardhan"
     },
     "jaigarh": {
         "name": "JSW Jaigarh Port",
-        "url": "https://www.tidetime.org/asia/india/mumbai.htm",
-        "ref": "Mumbai"
+        "url": "https://www.tidetime.org/asia/india/harnai.htm",
+        "ref": "Harnai"
     },
     "daman": {
         "name": "Daman (Jampur Beach)",
