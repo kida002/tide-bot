@@ -6,6 +6,7 @@ from datetime import datetime, timezone, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 
+# 🔐 ENV
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 TIDE_API_KEY = os.environ.get("tide_key")
 
@@ -17,12 +18,13 @@ locations = {
     "daman": {"name": "Daman (Jampur Beach)", "lat": 20.41, "lng": 72.83}
 }
 
+# 🇮🇳 IST
 IST = timezone(timedelta(hours=5, minutes=30))
 
+# 📂 File storage
 DATA_FILE = "tide_data.json"
 
 
-# 📂 Load file
 def load_data():
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, "r") as f:
@@ -30,7 +32,6 @@ def load_data():
     return {}
 
 
-# 💾 Save file
 def save_data(data):
     with open(DATA_FILE, "w") as f:
         json.dump(data, f)
@@ -39,16 +40,16 @@ def save_data(data):
 def get_tide(lat, lng, location_name):
     try:
         today_key = datetime.now(IST).strftime("%Y-%m-%d")
-        key = f"{lat},{lng}_{today_key}"
+        cache_key = f"{lat},{lng}_{today_key}"
 
         data_store = load_data()
 
-        # ✅ USE FILE CACHE
-        if key in data_store:
+        # ✅ Use saved data
+        if cache_key in data_store:
             print("⚡ Using saved file data")
-            return data_store[key]
+            return data_store[cache_key]
 
-        print("🌐 Calling API...")
+        print("🌐 Calling WorldTides API")
 
         url = f"https://www.worldtides.info/api/v3?extremes&lat={lat}&lon={lng}&days=2&key={TIDE_API_KEY}"
         response = requests.get(url, timeout=10)
@@ -66,16 +67,19 @@ def get_tide(lat, lng, location_name):
 
         tides = []
 
+        # 🔄 Convert to IST
         for tide in extremes:
             utc_time = datetime.fromtimestamp(tide["dt"], tz=timezone.utc)
             ist_time = utc_time.astimezone(IST)
             tides.append((ist_time, tide["type"], tide["height"]))
 
+        # sort
         tides.sort(key=lambda x: x[0])
 
+        # 📅 Today's tides
         today_tides = [t for t in tides if t[0].date() == today]
 
-        # ensure 4 tides
+        # 🔥 ensure 4 tides
         if len(today_tides) < 4:
             for t in tides:
                 if t not in today_tides:
@@ -84,15 +88,20 @@ def get_tide(lat, lng, location_name):
                     break
 
         today_tides.sort(key=lambda x: x[0])
-        final = today_tides[:4]
+        final_tides = today_tides[:4]
 
-        for t in final:
-            icon = "🔴" if t[1] == "High" else "🔵"
+        # 🎯 Format output (with date + height)
+        for t in final_tides:
             time_str = t[0].strftime("%I:%M %p")
-            message += f"{icon} {t[1]} Tide — {time_str}\n"
+            date_str = t[0].strftime("%d %b")
+            height = round(t[2], 3)
 
-        # 💾 SAVE TO FILE
-        data_store[key] = message
+            icon = "🔴" if t[1] == "High" else "🔵"
+
+            message += f"{icon} {t[1]} Tide: {time_str} ({date_str}) — {height}m\n"
+
+        # 💾 Save
+        data_store[cache_key] = message
         save_data(data_store)
 
         return message
@@ -101,7 +110,7 @@ def get_tide(lat, lng, location_name):
         return f"❌ Error: {str(e)}"
 
 
-# 🤖 /tide
+# 🤖 /tide command
 async def tide(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("📍 Kundalika", callback_data="kundalika")],
@@ -131,11 +140,11 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(result, parse_mode="Markdown")
 
 
-# 🚀 RUN
+# 🚀 MAIN
 app = ApplicationBuilder().token(BOT_TOKEN).build()
 
 app.add_handler(CommandHandler("tide", tide))
 app.add_handler(CallbackQueryHandler(button_click))
 
-print("✅ Bot running with FILE caching...")
+print("✅ Bot running with permanent caching...")
 app.run_polling()
