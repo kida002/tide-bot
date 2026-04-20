@@ -44,10 +44,9 @@ def get_tide(url, location_name, ref):
         message += f"📅 {today}\n"
         message += f"📍 Reference: {ref}\n\n"
 
-        # Find today's summary paragraph
-        paragraphs = soup.find_all("p")
+        # Find today's tide summary paragraph
         tide_text = ""
-        for p in paragraphs:
+        for p in soup.find_all("p"):
             text = p.get_text()
             if "predicted tides today" in text.lower():
                 tide_text = text
@@ -56,59 +55,25 @@ def get_tide(url, location_name, ref):
         if not tide_text:
             return message + "❌ Could not fetch tide data."
 
-        # Extract high and low tides using regex
-        # Pattern: "high tide at TIME" or "low tide at TIME"
-        highs = re.findall(r'high tide at\s+([\d:apm]+)', tide_text, re.IGNORECASE)
-        lows = re.findall(r'low tide at\s+([\d:apm]+)', tide_text, re.IGNORECASE)
+        # Parse tides from paragraph using regex
+        # matches like: "high tide at 8:37am" or "low tide at 1:51am"
+        pattern = r'(high|low) tide at\s+([\d:]+(?:am|pm))'
+        matches = re.findall(pattern, tide_text, re.IGNORECASE)
 
-        # Also find heights from table
-        table = soup.find("table")
-        heights = []
-        if table:
-            first_td = table.find("td")
-            if first_td:
-                items = first_td.find_all("li")
-                for item in items:
-                    text = item.get_text().strip()
-                    # Extract height like (4.82m)
-                    height_match = re.search(r'\(([\d.]+m)', text)
-                    if height_match:
-                        heights.append(height_match.group(1))
+        # Also get heights from paragraph like "(4.82m)"
+        height_pattern = r'\(([\d.]+m[\d.ft]*)\)'
+        heights = re.findall(height_pattern, tide_text)
 
-        # Build tide list in order from table
-        if table:
-            first_td = table.find("td")
-            if first_td:
-                items = first_td.find_all("li")
-                if items:
-                    for item in items:
-                        text = item.get_text().strip()
-                        # Extract time and height
-                        time_match = re.search(r'([\d:]+(?:am|pm))', text, re.IGNORECASE)
-                        height_match = re.search(r'\(([\d.]+m)', text)
-                        tide_type = "High" if "High" in text else "Low"
-                        icon = "🔴" if tide_type == "High" else "🔵"
+        if not matches:
+            return message + "❌ Could not parse tide data."
 
-                        time = time_match.group(1) if time_match else "N/A"
-                        height = height_match.group(1) if height_match else ""
-
-                        message += f"{icon} *{tide_type} Tide:* {time}"
-                        if height:
-                            message += f" — {height}"
-                        message += "\n"
-                    return message
-
-        # Fallback: use paragraph data
-        if highs or lows:
-            all_tides = []
-            for h in highs:
-                all_tides.append(("High", h))
-            for l in lows:
-                all_tides.append(("Low", l))
-
-            for tide_type, time in all_tides:
-                icon = "🔴" if tide_type == "High" else "🔵"
-                message += f"{icon} *{tide_type} Tide:* {time}\n"
+        for i, (tide_type, time) in enumerate(matches):
+            icon = "🔴" if tide_type.lower() == "high" else "🔵"
+            height = heights[i] if i < len(heights) else ""
+            if height:
+                message += f"{icon} *{tide_type.capitalize()} Tide:* {time} — {height}\n"
+            else:
+                message += f"{icon} *{tide_type.capitalize()} Tide:* {time}\n"
 
         return message
 
