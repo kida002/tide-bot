@@ -6,7 +6,9 @@ from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandle
 
 # 🔐 ENV VARIABLES
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-TIDE_API_KEY = os.environ.get("TIDE_API_KEY")
+TIDE_API_KEY = os.environ.get("tide_key")   # ✅ changed here
+
+print("API KEY:", TIDE_API_KEY)
 
 # 📍 Locations
 locations = {
