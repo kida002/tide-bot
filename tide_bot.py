@@ -1,4 +1,5 @@
 import os
+import re
 import requests
 from bs4 import BeautifulSoup
 from datetime import datetime
@@ -43,37 +44,66 @@ def get_tide(url, location_name, ref):
         message += f"📅 {today}\n"
         message += f"📍 Reference: {ref}\n\n"
 
-        # Find today's tide table — first table on the page
+        # ---- FORMAT 1: Table with State/Time/Height columns (Revadanda style) ----
         tables = soup.find_all("table")
-        today_table = None
         for table in tables:
-            headers_row = table.find("tr")
-            if headers_row:
-                headers_text = headers_row.get_text().lower()
-                if "state" in headers_text and "time" in headers_text:
-                    today_table = table
-                    break
+            header = table.find("tr")
+            if header and "state" in header.get_text().lower() and "time" in header.get_text().lower():
+                rows = table.find_all("tr")[1:]
+                if rows:
+                    for row in rows:
+                        cells = row.find_all("td")
+                        if len(cells) >= 3:
+                            state = cells[0].get_text().strip()
+                            time = cells[1].get_text().strip()
+                            height_raw = cells[2].get_text().strip()
+                            # Keep only metric part e.g. "4.82m"
+                            height = re.search(r'[\d.]+m', height_raw)
+                            height = height.group(0) if height else height_raw
+                            icon = "🔴" if "high" in state.lower() else "🔵"
+                            message += f"{icon} *{state} Tide:* {time} — {height}\n"
+                    return message
 
-        if not today_table:
-            return message + "❌ Could not fetch tide data."
+        # ---- FORMAT 2: List items inside table (Daman style) ----
+        for table in tables:
+            first_td = table.find("td")
+            if first_td:
+                items = first_td.find_all("li")
+                if items:
+                    for item in items:
+                        text = item.get_text().strip()
+                        # Extract: "High 8:37am (4.82m)"
+                        match = re.match(r'(High|Low)\s+([\d:apm]+)\s*\(([\d.]+m)', text, re.IGNORECASE)
+                        if match:
+                            tide_type = match.group(1)
+                            time = match.group(2)
+                            height = match.group(3) + "m"
+                            icon = "🔴" if "high" in tide_type.lower() else "🔵"
+                            message += f"{icon} *{tide_type} Tide:* {time} — {height}\n"
+                        else:
+                            # Try without height
+                            match2 = re.match(r'(High|Low)\s+([\d:apm]+)', text, re.IGNORECASE)
+                            if match2:
+                                tide_type = match2.group(1)
+                                time = match2.group(2)
+                                icon = "🔴" if "high" in tide_type.lower() else "🔵"
+                                message += f"{icon} *{tide_type} Tide:* {time}\n"
+                    if "Tide:" in message:
+                        return message
 
-        rows = today_table.find_all("tr")[1:]  # skip header row
-        if not rows:
-            return message + "❌ No tide data found."
+        # ---- FORMAT 3: Paragraph fallback ----
+        for p in soup.find_all("p"):
+            text = p.get_text()
+            if "predicted tides today" in text.lower():
+                pattern = r'(high|low) tide at\s+([\d:]+(?:am|pm))'
+                matches = re.findall(pattern, text, re.IGNORECASE)
+                if matches:
+                    for tide_type, time in matches:
+                        icon = "🔴" if "high" in tide_type.lower() else "🔵"
+                        message += f"{icon} *{tide_type.capitalize()} Tide:* {time}\n"
+                    return message
 
-        for row in rows:
-            cells = row.find_all("td")
-            if len(cells) >= 3:
-                state = cells[0].get_text().strip()
-                time = cells[1].get_text().strip()
-                height = cells[2].get_text().strip()
-                # Clean height — keep only metric (e.g. 4.82m)
-                height_clean = height.split("m")[0] + "m" if "m" in height else height
-
-                icon = "🔴" if "high" in state.lower() else "🔵"
-                message += f"{icon} *{state} Tide:* {time} — {height_clean}\n"
-
-        return message
+        return message + "❌ Could not fetch tide data."
 
     except Exception as e:
         return f"❌ Error: {str(e)}"
