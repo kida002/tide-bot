@@ -1,4 +1,5 @@
 import os
+import re
 import requests
 from bs4 import BeautifulSoup
 from datetime import datetime
@@ -7,7 +8,6 @@ from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandle
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 
-# 📍 Locations using tidetime.org
 locations = {
     "kundalika": {
         "name": "Kundalika",
@@ -32,7 +32,6 @@ locations = {
 }
 
 
-# 🌊 Scrape tide data from tidetime.org
 def get_tide(url, location_name, ref):
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
@@ -45,20 +44,38 @@ def get_tide(url, location_name, ref):
         message += f"📅 {today}\n"
         message += f"📍 Reference: {ref}\n\n"
 
-        # Find the paragraph that has today's tide summary
+        # Find today's summary paragraph
         paragraphs = soup.find_all("p")
-        tide_para = None
+        tide_text = ""
         for p in paragraphs:
             text = p.get_text()
             if "predicted tides today" in text.lower():
-                tide_para = text
+                tide_text = text
                 break
 
-        if tide_para:
-            message += f"ℹ️ {tide_para.strip()}\n\n"
+        if not tide_text:
+            return message + "❌ Could not fetch tide data."
 
-        # Also get table data for detailed view
+        # Extract high and low tides using regex
+        # Pattern: "high tide at TIME" or "low tide at TIME"
+        highs = re.findall(r'high tide at\s+([\d:apm]+)', tide_text, re.IGNORECASE)
+        lows = re.findall(r'low tide at\s+([\d:apm]+)', tide_text, re.IGNORECASE)
+
+        # Also find heights from table
         table = soup.find("table")
+        heights = []
+        if table:
+            first_td = table.find("td")
+            if first_td:
+                items = first_td.find_all("li")
+                for item in items:
+                    text = item.get_text().strip()
+                    # Extract height like (4.82m)
+                    height_match = re.search(r'\(([\d.]+m)', text)
+                    if height_match:
+                        heights.append(height_match.group(1))
+
+        # Build tide list in order from table
         if table:
             first_td = table.find("td")
             if first_td:
@@ -66,22 +83,40 @@ def get_tide(url, location_name, ref):
                 if items:
                     for item in items:
                         text = item.get_text().strip()
-                        if "High" in text:
-                            message += f"🔴 {text}\n"
-                        elif "Low" in text:
-                            message += f"🔵 {text}\n"
+                        # Extract time and height
+                        time_match = re.search(r'([\d:]+(?:am|pm))', text, re.IGNORECASE)
+                        height_match = re.search(r'\(([\d.]+m)', text)
+                        tide_type = "High" if "High" in text else "Low"
+                        icon = "🔴" if tide_type == "High" else "🔵"
+
+                        time = time_match.group(1) if time_match else "N/A"
+                        height = height_match.group(1) if height_match else ""
+
+                        message += f"{icon} *{tide_type} Tide:* {time}"
+                        if height:
+                            message += f" — {height}"
+                        message += "\n"
                     return message
 
-        if tide_para:
-            return message
+        # Fallback: use paragraph data
+        if highs or lows:
+            all_tides = []
+            for h in highs:
+                all_tides.append(("High", h))
+            for l in lows:
+                all_tides.append(("Low", l))
 
-        return "❌ Could not fetch tide data."
+            for tide_type, time in all_tides:
+                icon = "🔴" if tide_type == "High" else "🔵"
+                message += f"{icon} *{tide_type} Tide:* {time}\n"
+
+        return message
 
     except Exception as e:
         return f"❌ Error: {str(e)}"
 
 
-# 🤖 /tide command — show 4 buttons
+# 🤖 /tide command
 async def tide(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("📍 Kundalika", callback_data="kundalika")],
