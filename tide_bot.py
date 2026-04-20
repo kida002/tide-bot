@@ -31,50 +31,61 @@ locations = {
     }
 }
 
+IST = timezone(timedelta(hours=5, minutes=30))
+
 
 def get_tide(lat, lng, location_name):
     try:
-        # Find nearest tide station
-        search_url = f"https://tidecheck.com/api/stations/nearest?lat={lat}&lng={lng}"
         headers = {"X-API-Key": TIDE_API_KEY}
+
+        # Step 1 — Find nearest station
+        search_url = f"https://tidecheck.com/api/stations/nearest?lat={lat}&lng={lng}"
         search_res = requests.get(search_url, headers=headers, timeout=10).json()
 
-        if not search_res or "stations" not in search_res:
-            return "❌ Could not find tide station."
+        # Get station ID from response
+        stations = search_res.get("stations", [])
+        if not stations:
+            return f"❌ No tide station found near {location_name}."
 
-        station_id = search_res["stations"][0]["id"]
-        station_name = search_res["stations"][0].get("name", "Nearest Station")
+        station_id = stations[0]["id"]
+        station_name = stations[0].get("name", "Nearest Station")
 
-        # Get today's tide predictions
+        # Step 2 — Get tide predictions
         tide_url = f"https://tidecheck.com/api/station/{station_id}/tides?days=1&datum=LAT"
         tide_res = requests.get(tide_url, headers=headers, timeout=10).json()
 
-        if "tides" not in tide_res:
-            return "❌ Could not fetch tide data."
+        # Get extremes from response
+        extremes = tide_res.get("extremes", [])
+        if not extremes:
+            return f"❌ No tide data found for {location_name}."
 
-        today = datetime.now().strftime("%A, %d %B %Y")
-        IST = timezone(timedelta(hours=5, minutes=30))
+        today = datetime.now(IST).strftime("%A, %d %B %Y")
+        today_date = datetime.now(IST).date()
 
         message = f"🌊 *Tide Times - {location_name}*\n"
         message += f"📅 {today}\n"
         message += f"📍 Station: {station_name}\n\n"
 
-        # Get today's date in IST
-        today_date = datetime.now(IST).date()
+        found = False
+        for extreme in extremes:
+            tide_type = extreme.get("type", "")
+            time_str = extreme.get("time", "")
+            height = extreme.get("height", "")
 
-        for tide in tide_res["tides"]:
-            if tide.get("type") in ["H", "L"]:
-                # Convert UTC time to IST
-                utc_time = datetime.fromisoformat(tide["time"].replace("Z", "+00:00"))
-                ist_time = utc_time.astimezone(IST)
+            # Convert UTC to IST
+            utc_time = datetime.fromisoformat(time_str.replace("Z", "+00:00"))
+            ist_time = utc_time.astimezone(IST)
 
-                # Only show today's tides
-                if ist_time.date() == today_date:
-                    time_str = ist_time.strftime("%I:%M %p")
-                    height = tide.get("height", "")
-                    tide_type = "High" if tide["type"] == "H" else "Low"
-                    icon = "🔴" if tide["type"] == "H" else "🔵"
-                    message += f"{icon} *{tide_type} Tide:* {time_str} — {height}m\n"
+            # Only today's tides
+            if ist_time.date() == today_date:
+                found = True
+                time_formatted = ist_time.strftime("%I:%M %p")
+                icon = "🔴" if tide_type == "high" else "🔵"
+                tide_label = "High" if tide_type == "high" else "Low"
+                message += f"{icon} *{tide_label} Tide:* {time_formatted} — {height}m\n"
+
+        if not found:
+            message += "❌ No tides found for today."
 
         return message
 
