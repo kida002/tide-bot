@@ -1,0 +1,1 @@
+worker: python tide_bot.py
