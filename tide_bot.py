@@ -1,115 +1,75 @@
 import os
 import requests
 from bs4 import BeautifulSoup
+from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 
-# 📍 Locations and their URLs
+# 📍 Locations using tidetime.org
 locations = {
     "kundalika": {
         "name": "Kundalika",
-        "url": "https://www.tideschart.com/India/Maharashtra/Raigarh/Bankot/"
+        "url": "https://www.tidetime.org/asia/india/revadanda.htm",
+        "ref": "Revadanda"
     },
     "bankot": {
         "name": "Bankot Creek Bridge",
-        "url": "https://www.tideschart.com/India/Maharashtra/Raigarh/Bankot/"
+        "url": "https://www.tidetime.org/asia/india/revadanda.htm",
+        "ref": "Revadanda"
     },
     "jaigarh": {
         "name": "JSW Jaigarh Port",
-        "url": "https://www.tideschart.com/India/Maharashtra/Ratnagiri/Jaigarh/"
+        "url": "https://www.tidetime.org/asia/india/dabhol.htm",
+        "ref": "Dabhol"
     },
     "daman": {
         "name": "Daman (Jampur Beach)",
-        "url": "https://www.tidetime.org/asia/india/daman.htm"
+        "url": "https://www.tidetime.org/asia/india/daman.htm",
+        "ref": "Daman"
     }
 }
 
 
-# 🌊 Scrape tide data from tideschart.com
-def get_tide_tideschart(url, location_name):
+# 🌊 Scrape tide data from tidetime.org
+def get_tide(url, location_name, ref):
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
         res = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(res.text, "html.parser")
 
-        # Find today's tide table
+        today = datetime.now().strftime("%A, %d %B %Y")
+
+        message = f"🌊 *Tide Times - {location_name}*\n"
+        message += f"📅 {today}\n"
+        message += f"📍 Reference Station: {ref}\n\n"
+
+        # Find today's tide table - first column
         table = soup.find("table")
         if not table:
             return "❌ Could not fetch tide data."
 
-        rows = table.find_all("tr")
-        if len(rows) < 2:
+        # Get first cell (today's data)
+        first_td = table.find("td")
+        if not first_td:
             return "❌ No tide data found."
 
-        # Get today's first row
-        today_row = rows[1]
-        cells = today_row.find_all("td")
-
-        if len(cells) < 4:
+        items = first_td.find_all("li")
+        if not items:
             return "❌ Tide data format changed."
 
-        from datetime import datetime
-        today = datetime.now().strftime("%A, %d %B %Y")
-
-        message = f"🌊 *Tide Times - {location_name}*\n"
-        message += f"📅 {today}\n\n"
-
-        tides = []
-        for cell in cells[:4]:
-            text = cell.get_text(separator=" ").strip()
-            if text:
-                tides.append(text)
-
-        labels = ["1st Tide", "2nd Tide", "3rd Tide", "4th Tide"]
-        icons = ["🔴", "🔵", "🔴", "🔵"]
-
-        for i, tide in enumerate(tides):
-            if i < len(labels):
-                message += f"{icons[i]} {labels[i]}: {tide}\n"
+        for item in items:
+            text = item.get_text().strip()
+            if "High" in text:
+                message += f"🔴 {text}\n"
+            elif "Low" in text:
+                message += f"🔵 {text}\n"
 
         return message
 
     except Exception as e:
-        return f"❌ Error fetching data: {str(e)}"
-
-
-# 🌊 Scrape tide data from tidetime.org (Daman)
-def get_tide_tidetime(url, location_name):
-    try:
-        headers = {"User-Agent": "Mozilla/5.0"}
-        res = requests.get(url, headers=headers, timeout=10)
-        soup = BeautifulSoup(res.text, "html.parser")
-
-        from datetime import datetime
-        today = datetime.now().strftime("%A, %d %B %Y")
-
-        message = f"🌊 *Tide Times - {location_name}*\n"
-        message += f"📅 {today}\n\n"
-
-        # Find tide table
-        table = soup.find("table", {"class": "tide-table"})
-        if not table:
-            table = soup.find("table")
-
-        if not table:
-            return "❌ Could not fetch tide data."
-
-        rows = table.find_all("tr")
-        for row in rows[1:5]:
-            cells = row.find_all("td")
-            if len(cells) >= 2:
-                time = cells[0].get_text().strip()
-                height = cells[1].get_text().strip()
-                tide_type = cells[2].get_text().strip() if len(cells) > 2 else ""
-                icon = "🔴" if "High" in tide_type else "🔵"
-                message += f"{icon} {tide_type}: {time} — {height}\n"
-
-        return message
-
-    except Exception as e:
-        return f"❌ Error fetching data: {str(e)}"
+        return f"❌ Error: {str(e)}"
 
 
 # 🤖 /tide command — show 4 buttons
@@ -138,11 +98,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.edit_message_text("⏳ Fetching tide data...")
 
-    if location_key == "daman":
-        message = get_tide_tidetime(location["url"], location["name"])
-    else:
-        message = get_tide_tideschart(location["url"], location["name"])
-
+    message = get_tide(location["url"], location["name"], location["ref"])
     await query.edit_message_text(message, parse_mode="Markdown")
 
 
