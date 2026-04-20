@@ -33,14 +33,14 @@ def get_tide(lat, lng, location_name):
         if not extremes:
             return f"⚠️ No tide data for {location_name}"
 
-        today_date = datetime.now(IST).date()
-        today_str = datetime.now(IST).strftime("%A, %d %B %Y")
+        now = datetime.now(IST)
+        today_date = now.date()
+        today_str = now.strftime("%A, %d %B %Y")
 
         message = f"🌊 *Tide Times - {location_name}*\n"
         message += f"📅 {today_str}\n"
         message += f"📍 Station: {station}\n\n"
 
-        # 🔥 collect today's tides
         today_tides = []
 
         for tide in extremes:
@@ -51,24 +51,36 @@ def get_tide(lat, lng, location_name):
             utc_time = datetime.fromtimestamp(timestamp, tz=timezone.utc)
             ist_time = utc_time.astimezone(IST)
 
+            # 🔥 Key fix: include full calendar day
             if ist_time.date() == today_date:
                 today_tides.append((ist_time, tide_type, height))
 
-        # 🔥 ensure we always show 4 tides
+        # 🔥 SORT (important)
+        today_tides.sort(key=lambda x: x[0])
+
+        # 🔥 Ensure 4 tides (if only 2, pull previous ones)
+        if len(today_tides) < 4:
+            for tide in extremes:
+                utc_time = datetime.fromtimestamp(tide["dt"], tz=timezone.utc)
+                ist_time = utc_time.astimezone(IST)
+
+                if ist_time.date() < today_date:
+                    today_tides.insert(0, (ist_time, tide["type"], tide["height"]))
+
+                if len(today_tides) >= 4:
+                    break
+
+        # 🔥 Print only 4
         for ist_time, tide_type, height in today_tides[:4]:
             time_formatted = ist_time.strftime("%I:%M %p")
             icon = "🔴" if tide_type == "High" else "🔵"
 
             message += f"{icon} *{tide_type} Tide:* {time_formatted} — {round(height, 3)}m\n"
 
-        if not today_tides:
-            return f"⚠️ No tides found for today at {location_name}"
-
         return message
 
     except Exception as e:
         return f"❌ Error: {str(e)}"
-
 
 # 🤖 /tide command
 async def tide(update: Update, context: ContextTypes.DEFAULT_TYPE):
