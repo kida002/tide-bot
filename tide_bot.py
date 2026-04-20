@@ -24,30 +24,24 @@ cache = {}
 
 def get_tide(lat, lng, location_name):
     try:
-        cache_key = f"{lat},{lng}"
-
-        # ✅ Cache check
-        if cache_key in cache:
-            return cache[cache_key]
-
-        print("🔥 USING WORLDTIDES API 🔥")
-
         url = f"https://www.worldtides.info/api/v3?extremes&lat={lat}&lon={lng}&key={TIDE_API_KEY}"
 
         response = requests.get(url, timeout=10)
+
+        print("STATUS:", response.status_code)
+        print("RAW RESPONSE:", response.text)  # 🔥 DEBUG
+
         data = response.json()
 
-        extremes = data.get("extremes", [])
-        if not extremes:
-            return f"❌ No tide data found for {location_name}."
+        # 🔥 IMPORTANT FIX
+        if "extremes" not in data or not data["extremes"]:
+            return f"❌ API returned no data for {location_name}.\nCheck logs."
 
-        today = datetime.now(IST).strftime("%A, %d %B %Y")
+        extremes = data["extremes"]
 
-        message = f"🌊 *Tide Times - {location_name}*\n"
-        message += f"📅 {today}\n\n"
+        message = f"🌊 *Tide Times - {location_name}*\n\n"
 
-        # 🔥 FIX: removed strict date filter
-        for tide in extremes[:6]:  # show next 6 tides
+        for tide in extremes[:6]:
             tide_type = tide.get("type")
             timestamp = tide.get("dt")
             height = tide.get("height")
@@ -60,10 +54,7 @@ def get_tide(lat, lng, location_name):
 
             icon = "🔴" if tide_type == "High" else "🔵"
 
-            message += f"{icon} *{tide_type} Tide:* {time_formatted} ({date_formatted}) — {height}m\n"
-
-        # 💾 Cache result
-        cache[cache_key] = message
+            message += f"{icon} {tide_type} Tide: {time_formatted} ({date_formatted}) — {height}m\n"
 
         return message
 
