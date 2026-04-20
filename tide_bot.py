@@ -1,109 +1,82 @@
 import os
-import re
 import requests
-from bs4 import BeautifulSoup
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
+TIDE_API_KEY = os.environ.get("TIDE_API_KEY")
 
+# 📍 Locations with coordinates
 locations = {
     "kundalika": {
         "name": "Kundalika",
-        "url": "https://www.tidetime.org/asia/india/revadanda.htm",
-        "ref": "Revadanda"
+        "lat": 18.45,
+        "lng": 73.20
     },
     "bankot": {
         "name": "Bankot Creek Bridge",
-        "url": "https://www.tidetime.org/asia/india/srivardhan.htm",
-        "ref": "Srivardhan"
+        "lat": 17.98,
+        "lng": 73.03
     },
     "jaigarh": {
         "name": "JSW Jaigarh Port",
-        "url": "https://www.tidetime.org/asia/india/harnai.htm",
-        "ref": "Harnai"
+        "lat": 16.59,
+        "lng": 73.35
     },
     "daman": {
         "name": "Daman (Jampur Beach)",
-        "url": "https://www.tidetime.org/asia/india/daman.htm",
-        "ref": "Daman"
+        "lat": 20.41,
+        "lng": 72.83
     }
 }
 
 
-def get_tide(url, location_name, ref):
+def get_tide(lat, lng, location_name):
     try:
-        headers = {"User-Agent": "Mozilla/5.0"}
-        res = requests.get(url, headers=headers, timeout=10)
-        soup = BeautifulSoup(res.text, "html.parser")
+        # Find nearest tide station
+        search_url = f"https://tidecheck.com/api/stations/nearest?lat={lat}&lng={lng}"
+        headers = {"X-API-Key": TIDE_API_KEY}
+        search_res = requests.get(search_url, headers=headers, timeout=10).json()
+
+        if not search_res or "stations" not in search_res:
+            return "❌ Could not find tide station."
+
+        station_id = search_res["stations"][0]["id"]
+        station_name = search_res["stations"][0].get("name", "Nearest Station")
+
+        # Get today's tide predictions
+        tide_url = f"https://tidecheck.com/api/station/{station_id}/tides?days=1&datum=LAT"
+        tide_res = requests.get(tide_url, headers=headers, timeout=10).json()
+
+        if "tides" not in tide_res:
+            return "❌ Could not fetch tide data."
 
         today = datetime.now().strftime("%A, %d %B %Y")
+        IST = timezone(timedelta(hours=5, minutes=30))
 
         message = f"🌊 *Tide Times - {location_name}*\n"
         message += f"📅 {today}\n"
-        message += f"📍 Reference: {ref}\n\n"
+        message += f"📍 Station: {station_name}\n\n"
 
-        # ---- FORMAT 1: Table with State/Time/Height columns (Revadanda style) ----
-        tables = soup.find_all("table")
-        for table in tables:
-            header = table.find("tr")
-            if header and "state" in header.get_text().lower() and "time" in header.get_text().lower():
-                rows = table.find_all("tr")[1:]
-                if rows:
-                    for row in rows:
-                        cells = row.find_all("td")
-                        if len(cells) >= 3:
-                            state = cells[0].get_text().strip()
-                            time = cells[1].get_text().strip()
-                            height_raw = cells[2].get_text().strip()
-                            # Keep only metric part e.g. "4.82m"
-                            height = re.search(r'[\d.]+m', height_raw)
-                            height = height.group(0) if height else height_raw
-                            icon = "🔴" if "high" in state.lower() else "🔵"
-                            message += f"{icon} *{state} Tide:* {time} — {height}\n"
-                    return message
+        # Get today's date in IST
+        today_date = datetime.now(IST).date()
 
-        # ---- FORMAT 2: List items inside table (Daman style) ----
-        for table in tables:
-            first_td = table.find("td")
-            if first_td:
-                items = first_td.find_all("li")
-                if items:
-                    for item in items:
-                        text = item.get_text().strip()
-                        # Extract: "High 8:37am (4.82m)"
-                        match = re.match(r'(High|Low)\s+([\d:apm]+)\s*\(([\d.]+m)', text, re.IGNORECASE)
-                        if match:
-                            tide_type = match.group(1)
-                            time = match.group(2)
-                            height = match.group(3) + "m"
-                            icon = "🔴" if "high" in tide_type.lower() else "🔵"
-                            message += f"{icon} *{tide_type} Tide:* {time} — {height}\n"
-                        else:
-                            # Try without height
-                            match2 = re.match(r'(High|Low)\s+([\d:apm]+)', text, re.IGNORECASE)
-                            if match2:
-                                tide_type = match2.group(1)
-                                time = match2.group(2)
-                                icon = "🔴" if "high" in tide_type.lower() else "🔵"
-                                message += f"{icon} *{tide_type} Tide:* {time}\n"
-                    if "Tide:" in message:
-                        return message
+        for tide in tide_res["tides"]:
+            if tide.get("type") in ["H", "L"]:
+                # Convert UTC time to IST
+                utc_time = datetime.fromisoformat(tide["time"].replace("Z", "+00:00"))
+                ist_time = utc_time.astimezone(IST)
 
-        # ---- FORMAT 3: Paragraph fallback ----
-        for p in soup.find_all("p"):
-            text = p.get_text()
-            if "predicted tides today" in text.lower():
-                pattern = r'(high|low) tide at\s+([\d:]+(?:am|pm))'
-                matches = re.findall(pattern, text, re.IGNORECASE)
-                if matches:
-                    for tide_type, time in matches:
-                        icon = "🔴" if "high" in tide_type.lower() else "🔵"
-                        message += f"{icon} *{tide_type.capitalize()} Tide:* {time}\n"
-                    return message
+                # Only show today's tides
+                if ist_time.date() == today_date:
+                    time_str = ist_time.strftime("%I:%M %p")
+                    height = tide.get("height", "")
+                    tide_type = "High" if tide["type"] == "H" else "Low"
+                    icon = "🔴" if tide["type"] == "H" else "🔵"
+                    message += f"{icon} *{tide_type} Tide:* {time_str} — {height}m\n"
 
-        return message + "❌ Could not fetch tide data."
+        return message
 
     except Exception as e:
         return f"❌ Error: {str(e)}"
@@ -135,7 +108,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.edit_message_text("⏳ Fetching tide data...")
 
-    message = get_tide(location["url"], location["name"], location["ref"])
+    message = get_tide(location["lat"], location["lng"], location["name"])
     await query.edit_message_text(message, parse_mode="Markdown")
 
 
