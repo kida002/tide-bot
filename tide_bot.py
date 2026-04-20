@@ -1,5 +1,4 @@
 import os
-import re
 import requests
 from bs4 import BeautifulSoup
 from datetime import datetime
@@ -44,36 +43,35 @@ def get_tide(url, location_name, ref):
         message += f"📅 {today}\n"
         message += f"📍 Reference: {ref}\n\n"
 
-        # Find today's tide summary paragraph
-        tide_text = ""
-        for p in soup.find_all("p"):
-            text = p.get_text()
-            if "predicted tides today" in text.lower():
-                tide_text = text
-                break
+        # Find today's tide table — first table on the page
+        tables = soup.find_all("table")
+        today_table = None
+        for table in tables:
+            headers_row = table.find("tr")
+            if headers_row:
+                headers_text = headers_row.get_text().lower()
+                if "state" in headers_text and "time" in headers_text:
+                    today_table = table
+                    break
 
-        if not tide_text:
+        if not today_table:
             return message + "❌ Could not fetch tide data."
 
-        # Parse tides from paragraph using regex
-        # matches like: "high tide at 8:37am" or "low tide at 1:51am"
-        pattern = r'(high|low) tide at\s+([\d:]+(?:am|pm))'
-        matches = re.findall(pattern, tide_text, re.IGNORECASE)
+        rows = today_table.find_all("tr")[1:]  # skip header row
+        if not rows:
+            return message + "❌ No tide data found."
 
-        # Also get heights from paragraph like "(4.82m)"
-        height_pattern = r'\(([\d.]+m[\d.ft]*)\)'
-        heights = re.findall(height_pattern, tide_text)
+        for row in rows:
+            cells = row.find_all("td")
+            if len(cells) >= 3:
+                state = cells[0].get_text().strip()
+                time = cells[1].get_text().strip()
+                height = cells[2].get_text().strip()
+                # Clean height — keep only metric (e.g. 4.82m)
+                height_clean = height.split("m")[0] + "m" if "m" in height else height
 
-        if not matches:
-            return message + "❌ Could not parse tide data."
-
-        for i, (tide_type, time) in enumerate(matches):
-            icon = "🔴" if tide_type.lower() == "high" else "🔵"
-            height = heights[i] if i < len(heights) else ""
-            if height:
-                message += f"{icon} *{tide_type.capitalize()} Tide:* {time} — {height}\n"
-            else:
-                message += f"{icon} *{tide_type.capitalize()} Tide:* {time}\n"
+                icon = "🔴" if "high" in state.lower() else "🔵"
+                message += f"{icon} *{state} Tide:* {time} — {height_clean}\n"
 
         return message
 
