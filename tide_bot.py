@@ -13,9 +13,9 @@ TIDE_API_KEY = os.environ.get("tide_key")
 # 📍 Locations
 locations = {
     "kundalika": {"name": "Kundalika", "lat": 18.45, "lng": 73.20},
-    "bankot": {"name": "Bankot Creek Bridge", "lat": 17.98, "lng": 73.03},
-    "jaigarh": {"name": "JSW Jaigarh Port", "lat": 16.59, "lng": 73.35},
-    "daman": {"name": "Daman (Jampur Beach)", "lat": 20.41, "lng": 72.83}
+    "bankot":    {"name": "Bankot Creek Bridge", "lat": 17.98, "lng": 73.03},
+    "jaigarh":   {"name": "JSW Jaigarh Port", "lat": 16.59, "lng": 73.35},
+    "daman":     {"name": "Daman (Jampur Beach)", "lat": 20.41, "lng": 72.83}
 }
 
 # 🇮🇳 IST
@@ -37,49 +37,77 @@ def save_data(data):
         json.dump(data, f)
 
 
+def get_week_key(lat, lng):
+    # 🗓 New key only once per week — saves 6x more credits!
+    # Format: "18.45,73.20_2026-W17"  (year + week number)
+    now = datetime.now(IST)
+    week_str = now.strftime("%Y-W%W")
+    return f"{lat},{lng}_{week_str}"
+
+
 def get_tide(lat, lng, location_name):
     try:
-        today_key = datetime.now(IST).strftime("%Y-%m-%d")
-        cache_key = f"{lat},{lng}_{today_key}"
-
-        data_store = load_data()
-
-        # ✅ Use saved data
-        if cache_key in data_store:
-            print("⚡ Using saved file data")
-            return data_store[cache_key]
-
-        print("🌐 Calling WorldTides API")
-
-        url = f"https://www.worldtides.info/api/v3?extremes&lat={lat}&lon={lng}&days=2&key={TIDE_API_KEY}"
-        response = requests.get(url, timeout=10)
-        data = response.json()
-
-        extremes = data.get("extremes", [])
-        if not extremes:
-            return f"⚠️ No tide data for {location_name}"
-
         now = datetime.now(IST)
         today = now.date()
 
-        message = f"🌊 *Tide Times - {location_name}*\n"
-        message += f"📅 {now.strftime('%A, %d %B %Y')}\n\n"
+        # 🗓 Weekly cache key — same key for all 7 days of the week
+        week_key = get_week_key(lat, lng)
 
+        # 📅 Daily display key — so each day shows correct tides from saved 7-day data
+        day_key = f"{week_key}_{today.strftime('%Y-%m-%d')}"
+
+        data_store = load_data()
+
+        # ✅ Use today's already-formatted message if saved
+        if day_key in data_store:
+            print(f"⚡ Using saved data for {today} (no API call)")
+            return data_store[day_key]
+
+        # 🔍 Check if we already have raw 7-day data for this week
+        raw_key = f"{week_key}_raw"
+
+        if raw_key in data_store:
+            print(f"📦 Using saved raw weekly data, extracting {today}")
+            all_tides = data_store[raw_key]
+        else:
+            # 🌐 Call API — only once per week per location!
+            print(f"🌐 Calling WorldTides API for week {week_key}")
+
+            url = f"https://www.worldtides.info/api/v3?extremes&lat={lat}&lon={lng}&days=7&key={TIDE_API_KEY}"
+            response = requests.get(url, timeout=10)
+            data = response.json()
+
+            extremes = data.get("extremes", [])
+            if not extremes:
+                return f"⚠️ No tide data for {location_name}"
+
+            # 💾 Save raw 7-day data
+            all_tides = []
+            for tide in extremes:
+                utc_time = datetime.fromtimestamp(tide["dt"], tz=timezone.utc)
+                ist_time = utc_time.astimezone(IST)
+                all_tides.append({
+                    "time": ist_time.isoformat(),
+                    "type": tide["type"],
+                    "height": tide["height"]
+                })
+
+            data_store[raw_key] = all_tides
+            save_data(data_store)
+            print(f"✅ Saved 7 days of raw data for {location_name}")
+
+        # 🔄 Parse saved tides
         tides = []
+        for t in all_tides:
+            ist_time = datetime.fromisoformat(t["time"])
+            tides.append((ist_time, t["type"], t["height"]))
 
-        # 🔄 Convert to IST
-        for tide in extremes:
-            utc_time = datetime.fromtimestamp(tide["dt"], tz=timezone.utc)
-            ist_time = utc_time.astimezone(IST)
-            tides.append((ist_time, tide["type"], tide["height"]))
-
-        # sort
         tides.sort(key=lambda x: x[0])
 
-        # 📅 Today's tides
+        # 📅 Filter today's tides
         today_tides = [t for t in tides if t[0].date() == today]
 
-        # 🔥 ensure 4 tides
+        # 🔥 Ensure 4 tides — borrow from adjacent days if needed
         if len(today_tides) < 4:
             for t in tides:
                 if t not in today_tides:
@@ -90,18 +118,19 @@ def get_tide(lat, lng, location_name):
         today_tides.sort(key=lambda x: x[0])
         final_tides = today_tides[:4]
 
-        # 🎯 Format output (with date + height)
+        # 🎯 Format message
+        message = f"🌊 *Tide Times - {location_name}*\n"
+        message += f"📅 {now.strftime('%A, %d %B %Y')}\n\n"
+
         for t in final_tides:
             time_str = t[0].strftime("%I:%M %p")
             date_str = t[0].strftime("%d %b")
             height = round(t[2], 3)
-
             icon = "🔴" if t[1] == "High" else "🔵"
-
             message += f"{icon} {t[1]} Tide: {time_str} ({date_str}) — {height}m\n"
 
-        # 💾 Save
-        data_store[cache_key] = message
+        # 💾 Save today's formatted message
+        data_store[day_key] = message
         save_data(data_store)
 
         return message
@@ -146,5 +175,5 @@ app = ApplicationBuilder().token(BOT_TOKEN).build()
 app.add_handler(CommandHandler("tide", tide))
 app.add_handler(CallbackQueryHandler(button_click))
 
-print("✅ Bot running with permanent caching...")
+print("✅ Bot running with weekly caching — 4 credits/week for all 4 locations...")
 app.run_polling()
