@@ -1,0 +1,11 @@
+services:
+  - type: worker
+    name: tide-bot
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python tide_bot.py
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: tide_key
+        sync: false
