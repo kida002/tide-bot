@@ -4,7 +4,7 @@ import requests
 from datetime import datetime, timezone, timedelta
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
 # 🔐 ENV
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -38,8 +38,6 @@ def save_data(data):
 
 
 def get_week_key(lat, lng):
-    # 🗓 New key only once per week — saves 6x more credits!
-    # Format: "18.45,73.20_2026-W17"  (year + week number)
     now = datetime.now(IST)
     week_str = now.strftime("%Y-W%W")
     return f"{lat},{lng}_{week_str}"
@@ -50,10 +48,7 @@ def get_tide(lat, lng, location_name):
         now = datetime.now(IST)
         today = now.date()
 
-        # 🗓 Weekly cache key — same key for all 7 days of the week
         week_key = get_week_key(lat, lng)
-
-        # 📅 Daily display key — so each day shows correct tides from saved 7-day data
         day_key = f"{week_key}_{today.strftime('%Y-%m-%d')}"
 
         data_store = load_data()
@@ -107,7 +102,7 @@ def get_tide(lat, lng, location_name):
         # 📅 Filter today's tides
         today_tides = [t for t in tides if t[0].date() == today]
 
-        # 🔥 Ensure 4 tides — borrow from adjacent days if needed
+        # 🔥 Ensure 4 tides
         if len(today_tides) < 4:
             for t in tides:
                 if t not in today_tides:
@@ -147,7 +142,6 @@ async def tide(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📍 JSW Jaigarh Port", callback_data="jaigarh")],
         [InlineKeyboardButton("📍 Daman (Jampur Beach)", callback_data="daman")]
     ]
-
     await update.message.reply_text(
         "🌊 *Select Location:*",
         reply_markup=InlineKeyboardMarkup(keyboard),
@@ -159,21 +153,16 @@ async def tide(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-
     loc = locations[query.data]
-
     await query.edit_message_text("⏳ Fetching...")
-
     result = get_tide(loc["lat"], loc["lng"], loc["name"])
-
     await query.edit_message_text(result, parse_mode="Markdown")
 
 
 # 🚀 MAIN
-app = ApplicationBuilder().token(BOT_TOKEN).build()
-
-app.add_handler(CommandHandler("tide", tide))
-app.add_handler(CallbackQueryHandler(button_click))
-
-print("✅ Bot running with weekly caching — 4 credits/week for all 4 locations...")
-app.run_polling()
+if __name__ == "__main__":
+    app = Application.builder().token(BOT_TOKEN).build()
+    app.add_handler(CommandHandler("tide", tide))
+    app.add_handler(CallbackQueryHandler(button_click))
+    print("✅ Bot running with weekly caching — 4 credits/week for all 4 locations...")
+    app.run_polling()
