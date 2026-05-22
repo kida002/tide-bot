@@ -9,7 +9,7 @@ import requests
 
 # Configuration
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-TIDE_API_KEY = os.getenv("tide_key")
+TIDE_API_KEY = os.getenv("TIDE_API_KEY")
 CACHE_FILE = "tide_data.json"
 
 # Location coordinates
