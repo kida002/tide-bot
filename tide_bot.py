@@ -1,235 +1,112 @@
-#!/usr/bin/env python3
 import os
-import json
-import asyncio
-from datetime import datetime, timedelta
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+import re
 import requests
+from datetime import datetime, timezone, timedelta
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 
-# Configuration
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-TIDE_API_KEY = os.getenv("TIDE_API_KEY")
-CACHE_FILE = "tide_data.json"
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+TIDE_API_KEY = os.environ.get("TIDE_API_KEY")
 
-# Location coordinates
-LOCATIONS = {
-    "Kundalika": {"lat": 18.45, "lon": 73.20},
-    "Bankot Creek Bridge": {"lat": 17.98, "lon": 73.03},
-    "JSW Jaigarh Port": {"lat": 16.59, "lon": 73.35},
-    "Daman Jampur Beach": {"lat": 20.41, "lon": 72.83}
+locations = {
+    "kundalika": {"name": "Kundalika", "lat": 18.45, "lng": 73.20},
+    "bankot": {"name": "Bankot Creek Bridge", "lat": 17.98, "lng": 73.03},
+    "jaigarh": {"name": "JSW Jaigarh Port", "lat": 16.59, "lng": 73.35},
+    "daman": {"name": "Daman (Jampur Beach)", "lat": 20.41, "lng": 72.83}
 }
 
-def load_cache():
-    """Load cached tide data from file"""
-    try:
-        if os.path.exists(CACHE_FILE):
-            with open(CACHE_FILE, "r") as f:
-                return json.load(f)
-    except Exception as e:
-        print(f"⚠️ Cache load error: {e}")
-    return {}
+IST = timezone(timedelta(hours=5, minutes=30))
 
-def save_cache(data):
-    """Save tide data to cache file"""
-    try:
-        with open(CACHE_FILE, "w") as f:
-            json.dump(data, f, indent=2)
-        print(f"💾 Cache saved: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    except Exception as e:
-        print(f"⚠️ Cache save error: {e}")
 
-def fetch_weekly_tides(location_name):
-    """Fetch 7 days of tide data from WorldTides API"""
-    loc = LOCATIONS[location_name]
-    url = "https://www.worldtides.info/api/v3"
-    
-    start_date = datetime.now()
-    end_date = start_date + timedelta(days=7)
-    
-    params = {
-        "extremes": "",
-        "lat": loc["lat"],
-        "lon": loc["lon"],
-        "key": TIDE_API_KEY,
-        "start": int(start_date.timestamp()),
-        "length": 604800  # 7 days in seconds
-    }
-    
+def get_tide(lat, lng, location_name):
     try:
-        response = requests.get(url, params=params, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        
-        if "extremes" in data:
-            print(f"✅ Fetched 7-day data for {location_name}")
-            return data["extremes"]
+        headers = {"X-API-Key": TIDE_API_KEY}
+
+        search_url = f"https://tidecheck.com/api/stations/nearest?lat={lat}&lng={lng}"
+        search_res = requests.get(search_url, headers=headers, timeout=10).json()
+
+        if isinstance(search_res, list):
+            stations = search_res
         else:
-            print(f"⚠️ No extremes data for {location_name}")
-            return None
+            stations = search_res.get("stations", search_res.get("data", []))
+
+        if not stations:
+            return f"❌ No tide station found near {location_name}."
+
+        station = stations[0]
+        station_id = station.get("id") or station.get("stationId")
+        station_name = station.get("name", "Nearest Station")
+
+        tide_url = f"https://tidecheck.com/api/station/{station_id}/tides?days=1&datum=LAT"
+        tide_res = requests.get(tide_url, headers=headers, timeout=10).json()
+
+        extremes = tide_res.get("extremes", [])
+        if not extremes:
+            return f"❌ No tide data found for {location_name}."
+
+        today = datetime.now(IST).strftime("%A, %d %B %Y")
+        today_date = datetime.now(IST).date()
+
+        message = f"🌊 *Tide Times - {location_name}*\n"
+        message += f"📅 {today}\n"
+        message += f"📍 Station: {station_name}\n\n"
+
+        found = False
+        for extreme in extremes:
+            tide_type = extreme.get("type", "")
+            time_str = extreme.get("time", "")
+            height = extreme.get("height", "")
+
+            utc_time = datetime.fromisoformat(time_str.replace("Z", "+00:00"))
+            ist_time = utc_time.astimezone(IST)
+
+            if ist_time.date() == today_date:
+                found = True
+                time_formatted = ist_time.strftime("%I:%M %p")
+                icon = "🔴" if tide_type == "high" else "🔵"
+                tide_label = "High" if tide_type == "high" else "Low"
+                message += f"{icon} *{tide_label} Tide:* {time_formatted} — {height}m\n"
+
+        if not found:
+            message += "❌ No tides found for today."
+
+        return message
+
     except Exception as e:
-        print(f"❌ API fetch error for {location_name}: {e}")
-        return None
+        return f"❌ Error: {str(e)}"
 
-def format_tide_message(extremes, location_name, target_date):
-    """Format tide data for a specific date"""
-    if not extremes:
-        return f"⚠️ No tide data available for {location_name}"
-    
-    # Filter extremes for target date
-    day_extremes = []
-    for ext in extremes:
-        dt = datetime.fromtimestamp(ext["dt"])
-        if dt.date() == target_date:
-            day_extremes.append(ext)
-    
-    if not day_extremes:
-        return f"📅 No tide data for {target_date.strftime('%d %b %Y')} at {location_name}"
-    
-    # Build message
-    msg = f"🌊 *Tide Times - {location_name}*\n"
-    msg += f"📅 {target_date.strftime('%A, %d %B %Y')}\n\n"
-    
-    for ext in day_extremes:
-        dt = datetime.fromtimestamp(ext["dt"])
-        time_str = dt.strftime("%I:%M %p")
-        height = ext.get("height", 0)
-        tide_type = "🔴 High Tide" if ext["type"] == "High" else "🔵 Low Tide"
-        msg += f"{tide_type}: *{time_str}* ({height:.2f}m)\n"
-    
-    return msg
-
-def update_cache_if_needed():
-    """Check and update cache if older than 7 days"""
-    cache = load_cache()
-    now = datetime.now()
-    
-    for location_name in LOCATIONS.keys():
-        needs_update = False
-        
-        if location_name not in cache:
-            needs_update = True
-            print(f"🔄 No cache for {location_name}")
-        else:
-            cache_date = datetime.fromisoformat(cache[location_name]["fetch_date"])
-            age_days = (now - cache_date).days
-            
-            if age_days >= 7:
-                needs_update = True
-                print(f"🔄 Cache expired for {location_name} ({age_days} days old)")
-        
-        if needs_update:
-            print(f"📡 Fetching fresh data for {location_name}...")
-            extremes = fetch_weekly_tides(location_name)
-            
-            if extremes:
-                # Pre-format messages for next 7 days
-                daily_messages = {}
-                for i in range(7):
-                    target = (now + timedelta(days=i)).date()
-                    daily_messages[target.isoformat()] = format_tide_message(extremes, location_name, target)
-                
-                cache[location_name] = {
-                    "fetch_date": now.isoformat(),
-                    "raw_extremes": extremes,
-                    "daily_messages": daily_messages
-                }
-    
-    save_cache(cache)
-    return cache
 
 async def tide(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /tide command - show location buttons"""
-    print(f"📥 /tide command received from user {update.effective_user.id}")
-    
     keyboard = [
-        [InlineKeyboardButton(loc, callback_data=loc)] 
-        for loc in LOCATIONS.keys()
+        [InlineKeyboardButton("📍 Kundalika", callback_data="kundalika")],
+        [InlineKeyboardButton("📍 Bankot Creek Bridge", callback_data="bankot")],
+        [InlineKeyboardButton("📍 JSW Jaigarh Port", callback_data="jaigarh")],
+        [InlineKeyboardButton("📍 Daman (Jampur Beach)", callback_data="daman")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
     await update.message.reply_text(
-        "🌊 *Select a location for tide information:*",
+        "🌊 *Select Location for Tide Times:*",
         reply_markup=reply_markup,
         parse_mode="Markdown"
     )
-    print("✅ Location buttons sent")
+
 
 async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle inline button clicks"""
     query = update.callback_query
     await query.answer()
-    
-    location_name = query.data
-    print(f"📥 Button clicked: {location_name}")
-    
-    # Update cache if needed
-    cache = update_cache_if_needed()
-    
-    # Get today's message
-    today = datetime.now().date().isoformat()
-    
-    if location_name in cache and "daily_messages" in cache[location_name]:
-        message = cache[location_name]["daily_messages"].get(today)
-        if message:
-            await query.edit_message_text(text=message, parse_mode="Markdown")
-            print(f"✅ Tide data sent for {location_name}")
-        else:
-            await query.edit_message_text(text=f"⚠️ No tide data available for today at {location_name}")
-    else:
-        await query.edit_message_text(text=f"⚠️ Cache error for {location_name}. Please try again.")
 
-async def post_init(application: Application):
-    """Called after bot initialization - delete webhook"""
-    print("🔧 Removing any existing webhooks...")
-    await application.bot.delete_webhook(drop_pending_updates=True)
-    print("✅ Webhook cleared - using polling mode")
+    location_key = query.data
+    location = locations[location_key]
 
-def main():
-    """Main function - Replit compatible"""
-    print("\n" + "="*50)
-    print("🌊 ASHOKA TIDE INDICATOR BOT")
-    print("="*50)
-    
-    if not BOT_TOKEN:
-        print("❌ BOT_TOKEN not found in environment!")
-        print("Add it in Replit Secrets: BOT_TOKEN")
-        return
-    
-    if not TIDE_API_KEY:
-        print("❌ tide_key not found in environment!")
-        print("Add it in Replit Secrets: tide_key")
-        return
-    
-    print(f"✅ BOT_TOKEN: {BOT_TOKEN[:10]}...{BOT_TOKEN[-10:]}")
-    print(f"✅ tide_key: {TIDE_API_KEY[:10]}...{TIDE_API_KEY[-10:]}")
-    
-    # Create event loop if needed
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    
-    # Build application
-    print("\n🔨 Building bot application...")
-    app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
-    
-    # Add handlers
-    app.add_handler(CommandHandler("tide", tide))
-    app.add_handler(CallbackQueryHandler(button_click))
-    
-    print("✅ Handlers registered")
-    print(f"📅 Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S IST')}")
-    print("\n🟢 Bot is now RUNNING and listening for /tide commands...")
-    print("="*50 + "\n")
-    
-    # Run bot with polling
-    app.run_polling(
-        allowed_updates=Update.ALL_TYPES,
-        drop_pending_updates=True,
-        close_loop=False
-    )
+    await query.edit_message_text("⏳ Fetching tide data...")
 
-if __name__ == "__main__":
-    main()
+    message = get_tide(location["lat"], location["lng"], location["name"])
+    await query.edit_message_text(message, parse_mode="Markdown")
+
+
+app = ApplicationBuilder().token(BOT_TOKEN).build()
+app.add_handler(CommandHandler("tide", tide))
+app.add_handler(CallbackQueryHandler(button_click))
+
+print("Tide bot started...")
+app.run_polling()
